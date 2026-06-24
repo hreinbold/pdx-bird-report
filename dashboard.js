@@ -1,5 +1,11 @@
 let allDetections = [];
 
+const freqLabels = {
+  hour: 'Hourly',
+  day: 'Daily',
+  month: 'Monthly'
+};
+
 fetch('data/detections.json')
   .then(response => response.json())
   .then(data => {
@@ -77,8 +83,8 @@ function drawChart() {
   const yValues = sortedKeys.map(k => buckets[k]);
 
   const title = species === '__all__'
-    ? `All species — ${freq}ly detections`
-    : `${species} — ${freq}ly detections`;
+    ? `All species — ${freqLabels[freq]} detections`
+    : `${species} — ${freqLabels[freq]} detections`;
 
   Plotly.newPlot('chart', [{
     x: xValues,
@@ -86,9 +92,12 @@ function drawChart() {
     type: 'bar'
   }], {
     title: title,
-    xaxis: { title: freq.charAt(0).toUpperCase() + freq.slice(1) },
-    yaxis: { title: 'Detections' }
+    xaxis: { title: freqLabels[freq] },
+    yaxis: { title: 'Detections' },
+    autosize: true
   });
+
+  window.dispatchEvent(new Event('resize'));
 }
 
 document.getElementById('species-select').addEventListener('change', drawChart);
