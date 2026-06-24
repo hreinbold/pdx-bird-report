@@ -94,7 +94,8 @@ function drawChart() {
     title: title,
     xaxis: { title: freqLabels[freq] },
     yaxis: { title: 'Detections' },
-    autosize: true
+    autosize: true,
+    dragmode: false
   });
 
   window.dispatchEvent(new Event('resize'));

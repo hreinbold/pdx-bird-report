@@ -13,9 +13,41 @@
       flex-direction: column;
     }
     #controls {
-      flex-shrink: 0;
-      padding: 10px;
-    }
+  flex-shrink: 0;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+#controls label {
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+}
+
+#controls select,
+#controls input {
+  font-size: 16px;
+  padding: 6px;
+}
+
+@media (max-width: 600px) {
+  #controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #controls label {
+    width: 100%;
+  }
+
+  #controls select,
+  #controls input {
+    width: 100%;
+  }
+}
     #chart-wrapper {
       flex-grow: 1;
       overflow-x: auto;
