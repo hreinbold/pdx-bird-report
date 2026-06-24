@@ -6,6 +6,23 @@ const freqLabels = {
   month: 'Monthly'
 };
 
+const SPECIES_COLORS = {
+  'American Crow': '#1a1a1a',        // glossy black
+  'Lesser Goldfinch': '#e8c64a',     // bright yellow-gold
+  'House Finch': '#a13d4c',          // dusty rose-red (male's head/breast)
+  'Song Sparrow': '#7a6248',         // streaky brown
+  'Chipping Sparrow': '#a8763e',     // rufous cap, warm brown
+  'Dark-eyed Junco': '#5c5c5c',      // slate gray
+  'Evening Grosbeak': '#d4a72c',     // mustard yellow with black/white wings
+  'Varied Thrush': '#d2691e',        // burnt orange
+  'Canada Goose': '#4a3c2e'          // dark brown body
+};
+const DEFAULT_COLOR = '#4a90d9';
+
+function getColor(species) {
+  return SPECIES_COLORS[species] || DEFAULT_COLOR;
+}
+
 fetch('data/detections.json')
   .then(response => response.json())
   .then(data => {
@@ -71,6 +88,9 @@ function getSortedDays(detections) {
 
 // ---- View switching ----
 
+let trendFromDate = null;
+let trendToDate = null;
+
 function renderView() {
   const view = document.getElementById('view-select').value;
   const chartWrapper = document.getElementById('chart-wrapper');
@@ -81,8 +101,19 @@ function renderView() {
     chartWrapper.style.display = 'block';
     deltaDisplay.style.display = 'none';
     trendControls.style.display = 'block';
+
+    // Restore the Trend view's own date range, if we've saved one
+    if (trendFromDate && trendToDate) {
+      document.getElementById('from-date').value = trendFromDate;
+      document.getElementById('to-date').value = trendToDate;
+    }
+
     drawChart();
   } else if (view === 'today') {
+    // Save whatever's currently in the date fields, in case it's the Trend range
+    trendFromDate = document.getElementById('from-date').value;
+    trendToDate = document.getElementById('to-date').value;
+
     chartWrapper.style.display = 'block';
     deltaDisplay.style.display = 'none';
     trendControls.style.display = 'none';
@@ -172,7 +203,8 @@ function drawTodayChart() {
     x: sorted.map(s => s[1]),
     y: sorted.map(s => s[0]),
     type: 'bar',
-    orientation: 'h'
+    orientation: 'h',
+    marker: { color: sorted.map(s => getColor(s[0])) }
   }], {
     title: 'Species Detected',
     xaxis: { title: 'Detections' },
