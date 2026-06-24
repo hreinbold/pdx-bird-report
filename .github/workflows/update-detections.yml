@@ -23,7 +23,7 @@ jobs:
       - name: Run update script
         env:
           BIRDWEATHER_TOKEN: ${{ secrets.BIRDWEATHER_TOKEN }}
-        run: python build_db.py
+        run: python build-db.py
 
       - name: Commit and push if changed
         run: |
