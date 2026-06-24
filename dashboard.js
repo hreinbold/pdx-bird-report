@@ -105,3 +105,17 @@ document.getElementById('species-select').addEventListener('change', drawChart);
 document.getElementById('freq-select').addEventListener('change', drawChart);
 document.getElementById('from-date').addEventListener('change', drawChart);
 document.getElementById('to-date').addEventListener('change', drawChart);
+
+document.getElementById('toggle-btn').addEventListener('click', () => {
+  document.getElementById('controls').classList.toggle('open');
+});
+
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    Plotly.Plots.resize('chart');
+  }, 200);
+});
+
+window.addEventListener('resize', () => {
+  Plotly.Plots.resize('chart');
+});
