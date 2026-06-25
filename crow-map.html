@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDX Crow Activity Map</title>
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: sans-serif;
+    }
+    #map {
+      position: absolute;
+      top: 0; bottom: 0; left: 0; right: 0;
+    }
+    #controls {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 500px;
+      z-index: 10;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    #time-label {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    #time-slider {
+      width: 100%;
+    }
+    #play-btn {
+      margin-top: 8px;
+      font-size: 16px;
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    #date-range-label {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <select id="window-select" style="width: 100%; margin-bottom: 8px; font-size: 14px; padding: 4px;"></select>
+    <div id="time-label">--:--</div>
+    <input type="range" id="time-slider" min="0" max="95" value="0" step="1">
+    <div style="display: flex; gap: 8px; justify-content: center; margin-top: 8px;">
+      <button id="step-back-btn">⏮ Step</button>
+      <button id="play-btn">▶ Play</button>
+      <button id="step-forward-btn">Step ⏭</button>
+    </div>
+    <div id="date-range-label"></div>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    let timeData = null;
+    let currentWindow = null;
+    let map = null;
+    let playing = false;
+    let playInterval = null;
+
+    const map_ = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      },
+      center: [-122.65, 45.52],
+      zoom: 10
+    });
+    map = map_;
+
+    fetch('data/crow_focus_window.json')
+      .then(r => r.json())
+      .then(data => {
+        timeData = data;
+
+        const select = document.getElementById('window-select');
+        data.window_labels.forEach(label => {
+          const opt = document.createElement('option');
+          opt.value = label;
+          opt.textContent = label;
+          select.appendChild(opt);
+        });
+        currentWindow = data.window_labels[0];
+        select.value = currentWindow;
+
+        const slider = document.getElementById('time-slider');
+        slider.max = data.windows[currentWindow].length - 1;
+
+        select.addEventListener('change', (e) => {
+          currentWindow = e.target.value;
+          const frames = timeData.windows[currentWindow];
+          document.getElementById('time-slider').max = frames.length - 1;
+          document.getElementById('time-slider').value = 0;
+          updateFrame(0);
+        });
+
+        map.on('load', () => initMapLayer());
+        if (map.loaded()) initMapLayer();
+      });
+
+    function initMapLayer() {
+      const features = timeData.stations.map(s => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: { station_id: s.station_id, name: s.station_name, count: 0 }
+      }));
+
+      map.addSource('stations', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features }
+      });
+
+      map.addLayer({
+        id: 'station-points',
+        type: 'circle',
+        source: 'stations',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['get', 'count'],
+            0, 3,
+            1, 6,
+            10, 14,
+            30, 24
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'count'],
+            0, '#cccccc',
+            1, '#aed8e6',
+            10, '#1d9e75',
+            30, '#0b3d2e'
+          ],
+          'circle-opacity': 0.75,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#333'
+        }
+      });
+
+      map.on('mouseenter', 'station-points', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'station-points', () => {
+        map.getCanvas().style.cursor = '';
+      });
+      map.on('click', 'station-points', (e) => {
+        const props = e.features[0].properties;
+        new maplibregl.Popup()
+          .setLngLat(e.lngLat)
+          .setHTML(`<strong>${props.name}</strong><br>${props.count} detections this slot`)
+          .addTo(map);
+      });
+
+      updateFrame(0);
+    }
+
+    function updateFrame(slotIndex) {
+      if (!timeData || !currentWindow) return;
+      const frames = timeData.windows[currentWindow];
+      const frame = frames[slotIndex];
+      document.getElementById('time-label').textContent = frame.time;
+
+      const source = map.getSource('stations');
+      if (!source) return;
+
+      const features = timeData.stations.map(s => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: {
+          station_id: s.station_id,
+          name: s.station_name,
+          count: frame.counts[s.station_id] || 0
+        }
+      }));
+
+      source.setData({ type: 'FeatureCollection', features });
+    }
+
+    document.getElementById('time-slider').addEventListener('input', (e) => {
+      updateFrame(parseInt(e.target.value));
+    });
+
+    document.getElementById('step-back-btn').addEventListener('click', () => {
+      const slider = document.getElementById('time-slider');
+      let prev = parseInt(slider.value) - 1;
+      if (prev < 0) prev = parseInt(slider.max);
+      slider.value = prev;
+      updateFrame(prev);
+    });
+
+    document.getElementById('step-forward-btn').addEventListener('click', () => {
+      const slider = document.getElementById('time-slider');
+      let next = parseInt(slider.value) + 1;
+      if (next > parseInt(slider.max)) next = 0;
+      slider.value = next;
+      updateFrame(next);
+    });
+
+    document.getElementById('play-btn').addEventListener('click', () => {
+      playing = !playing;
+      const btn = document.getElementById('play-btn');
+      if (playing) {
+        btn.textContent = '⏸ Pause';
+        playInterval = setInterval(() => {
+          const slider = document.getElementById('time-slider');
+          let next = parseInt(slider.value) + 1;
+          if (next > parseInt(slider.max)) next = 0;
+          slider.value = next;
+          updateFrame(next);
+        }, 400);
+      } else {
+        btn.textContent = '▶ Play';
+        clearInterval(playInterval);
+      }
+    });
+  </script>
+</body>
+</html>
