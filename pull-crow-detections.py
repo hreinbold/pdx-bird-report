@@ -10,6 +10,7 @@ Then join detections -> stations on stationId to attach coords, and
 write out a flat dataframe/CSV ready for mapping.
 """
 
+import os
 import time
 import requests
 import pandas as pd
@@ -26,14 +27,26 @@ AMERICAN_CROW_ID = 108
 ACTIVE_WINDOW_DAYS = 7  # station must have a detection within this many days to count as "active"
 
 
-def graphql_query(query, variables=None):
-    """POST a GraphQL query, raise on HTTP error or GraphQL-level errors."""
-    resp = requests.post(GRAPHQL_URL, json={"query": query, "variables": variables or {}})
-    resp.raise_for_status()
-    data = resp.json()
-    if "errors" in data:
-        raise RuntimeError(data["errors"])
-    return data["data"]
+def graphql_query(query, variables=None, max_retries=4):
+    """POST a GraphQL query, raise on HTTP error or GraphQL-level errors.
+    Retries with exponential backoff on connection-level failures (resets,
+    timeouts) - these are distinct from a clean HTTP 429, which we are not
+    currently seeing, so this may be a transient issue rather than a real
+    rate limit. Either way, backing off and retrying is the right response.
+    """
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(GRAPHQL_URL, json={"query": query, "variables": variables or {}}, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            if "errors" in data:
+                raise RuntimeError(data["errors"])
+            return data["data"]
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
+            print(f"  connection error ({e}), retrying in {wait}s (attempt {attempt+1}/{max_retries})...")
+            time.sleep(wait)
+    raise RuntimeError(f"Failed after {max_retries} retries")
 
 
 def get_active_stations():
@@ -91,14 +104,14 @@ def get_active_stations():
     return active
 
 
-def get_crow_detections(station_ids, period_days=1):
+def get_crow_detections(station_ids, from_dt, to_dt):
     """
     Pull American Crow detections for the given station IDs, paginating.
 
     station_ids: list of station id strings/ints (GraphQL coerces either)
-    period_days: how many days back to pull (the API defaults to 1 day
-                 if no 'period' arg is sent at all - this was happening
-                 silently before this fix)
+    from_dt, to_dt: ISO 8601 datetime strings (with offset, e.g.
+                    '2026-06-24T08:00:00-07:00') bounding the pull window.
+                    Confirmed working against the live API on 2026-06-26.
     """
     query = """
     query($stationIds: [ID!], $speciesIds: [ID!], $period: InputDuration, $first: Int, $after: String) {
@@ -122,22 +135,32 @@ def get_crow_detections(station_ids, period_days=1):
 
     all_detections = []
     after = None
+    page = 0
     while True:
         variables = {
             "stationIds": station_ids,
             "speciesIds": [AMERICAN_CROW_ID],
-            "period": {"count": period_days, "unit": "day"},
-            "first": 100,
+            "period": {"from": from_dt, "to": to_dt},
+            "first": 1000,
             "after": after,
         }
         data = graphql_query(query, variables)
         block = data["detections"]
         all_detections.extend(block["nodes"])
+        page += 1
         print(f"  pulled {len(block['nodes'])} detections, total so far: {len(all_detections)} / {block['totalCount']}")
+
+        # checkpoint every 20 pages so a crash doesn't lose everything pulled so far
+        if page % 20 == 0:
+            import json
+            with open("data/crow_detections_checkpoint.json", "w") as f:
+                json.dump(all_detections, f)
+            print(f"  [checkpoint saved at page {page}]")
+
         if not block["pageInfo"]["hasNextPage"]:
             break
         after = block["pageInfo"]["endCursor"]
-        time.sleep(0.5)
+        time.sleep(1.5)
 
     return all_detections
 
@@ -177,6 +200,32 @@ def build_dataframe(stations, detections):
 
 
 if __name__ == "__main__":
+    DATA_FILE = "data/crow_detections.csv"
+
+    # --- Load existing data, same dedupe-by-id pattern as the original REST updater ---
+    if os.path.exists(DATA_FILE):
+        existing_df = pd.read_csv(DATA_FILE, parse_dates=["timestamp"])
+        print(f"Loaded {len(existing_df)} existing detections")
+    else:
+        existing_df = pd.DataFrame(columns=["detection_id", "timestamp", "station_id", "station_name", "lat", "lon"])
+        print("No existing file found, starting fresh")
+
+    existing_ids = set(existing_df["detection_id"]) if not existing_df.empty else set()
+
+    # pull from the last known timestamp onward - small safety overlap of 10
+    # minutes in case the last run ended mid-detection-burst, dedupe handles
+    # any resulting repeats
+    if not existing_df.empty:
+        last_timestamp = existing_df["timestamp"].max()
+        from_dt = (last_timestamp - timedelta(minutes=10)).isoformat()
+    else:
+        # no existing data at all - fall back to a generous lookback for first run
+        from_dt = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    to_dt = datetime.now().astimezone().isoformat()  # now, in local tz with offset
+
+    print(f"Pulling from {from_dt} to {to_dt}")
+
     print("Pulling active stations in PDX bbox...")
     stations = get_active_stations()
 
@@ -185,14 +234,19 @@ if __name__ == "__main__":
 
     station_ids = [s["id"] for s in stations]
 
-    print(f"\nPulling American Crow detections across {len(station_ids)} stations (last 7 days)...")
-    detections = get_crow_detections(station_ids, period_days=7)
+    print(f"\nPulling American Crow detections across {len(station_ids)} stations...")
+    detections = get_crow_detections(station_ids, from_dt, to_dt)
 
     print(f"\nBuilding dataframe...")
-    df = build_dataframe(stations, detections)
-    print(df.head())
-    print(f"\nTotal crow detections with coordinates: {len(df)}")
+    new_df = build_dataframe(stations, detections)
 
-    out_path = "crow_detections.csv"
-    df.to_csv(out_path, index=False)
-    print(f"Saved to {out_path}")
+    # --- Dedupe: keep only genuinely new detection ids ---
+    if not new_df.empty:
+        new_df = new_df[~new_df["detection_id"].isin(existing_ids)]
+    print(f"Genuinely new detections (after dedupe): {len(new_df)}")
+
+    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+    combined_df = combined_df.sort_values("timestamp").reset_index(drop=True)
+
+    combined_df.to_csv(DATA_FILE, index=False)
+    print(f"Saved {len(combined_df)} total detections to {DATA_FILE}")

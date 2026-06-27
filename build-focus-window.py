@@ -74,7 +74,7 @@ def build_focus_window(df, center_time, label):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("crow_detections.csv", parse_dates=["timestamp"])
+    df = pd.read_csv("data/crow_detections.csv", parse_dates=["timestamp"])
 
     unique_dates = sorted(df["timestamp"].dt.strftime("%Y-%m-%d").unique())
     print(f"Found {len(unique_dates)} unique dates in dataset: {unique_dates}")
@@ -104,5 +104,5 @@ if __name__ == "__main__":
         time.sleep(0.5)  # be polite to the free sunrise-sunset.org API too
 
     combined = pd.concat(all_windows, ignore_index=True)
-    combined.to_csv("crow_focus_window.csv", index=False)
+    combined.to_csv("data/crow_focus_window.csv", index=False)
     print(f"\nSaved {len(combined)} rows across {len(unique_dates)} days to crow_focus_window.csv")

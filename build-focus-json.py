@@ -17,9 +17,14 @@ stations = (
 
 windows = {}
 for label, group in df.groupby("window_label"):
-    # build the full sequence of 2-min buckets actually present for this
-    # window, in chronological order
-    bucket_times = sorted(group["bucket_start"].unique())
+    # build a COMPLETE, evenly-spaced grid of 2-min buckets spanning this
+    # window's actual min-to-max timestamps - NOT just the bucket times that
+    # happened to have a detection. Without this, sparse windows silently
+    # skip empty slots, making consecutive frames represent wildly uneven
+    # amounts of real time (looks like "bigger bins" on a quiet night).
+    window_start = group["bucket_start"].min()
+    window_end = group["bucket_start"].max()
+    full_grid = pd.date_range(start=window_start, end=window_end, freq="2min")
 
     lookup = {
         (row["station_id"], row["bucket_start"]): row["detection_count"]
@@ -27,13 +32,13 @@ for label, group in df.groupby("window_label"):
     }
 
     frames = []
-    for bt in bucket_times:
+    for bt in full_grid:
         counts = {
             s["station_id"]: lookup.get((s["station_id"], bt), 0)
             for s in stations
         }
         frames.append({
-            "time": pd.Timestamp(bt).strftime("%H:%M"),
+            "time": bt.strftime("%H:%M"),
             "counts": counts
         })
 
