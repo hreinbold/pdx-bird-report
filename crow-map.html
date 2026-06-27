@@ -21,7 +21,7 @@
       top: 10px;
       left: 50%;
       transform: translateX(-50%);
-      width: 350px;
+      width: 500px;
       z-index: 10;
       background: #fff;
       border: 1px solid #ccc;
@@ -57,6 +57,10 @@
 </head>
 <body>
   <div id="controls">
+    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+      <label style="flex: 1; font-size: 13px;">From: <input type="date" id="range-from" style="width: 100%;"></label>
+      <label style="flex: 1; font-size: 13px;">To: <input type="date" id="range-to" style="width: 100%;"></label>
+    </div>
     <select id="window-select" style="width: 100%; margin-bottom: 8px; font-size: 14px; padding: 4px;"></select>
     <div id="time-label">--:--</div>
     <input type="range" id="time-slider" min="0" max="95" value="0" step="1">
@@ -100,20 +104,17 @@
       .then(data => {
         timeData = data;
 
-        const select = document.getElementById('window-select');
-        data.window_labels.forEach(label => {
-          const opt = document.createElement('option');
-          opt.value = label;
-          opt.textContent = label;
-          select.appendChild(opt);
-        });
-        currentWindow = data.window_labels[0];
-        select.value = currentWindow;
+        // default the range pickers to the full span of available data
+        const dates = data.window_labels.map(l => l.split('_')[0]).sort();
+        document.getElementById('range-from').value = dates[0];
+        document.getElementById('range-to').value = dates[dates.length - 1];
+
+        populateWindowDropdown();
 
         const slider = document.getElementById('time-slider');
-        slider.max = data.windows[currentWindow].length - 1;
+        slider.max = timeData.windows[currentWindow].length - 1;
 
-        select.addEventListener('change', (e) => {
+        document.getElementById('window-select').addEventListener('change', (e) => {
           currentWindow = e.target.value;
           const frames = timeData.windows[currentWindow];
           document.getElementById('time-slider').max = frames.length - 1;
@@ -121,9 +122,44 @@
           updateFrame(0);
         });
 
+        document.getElementById('range-from').addEventListener('change', populateWindowDropdown);
+        document.getElementById('range-to').addEventListener('change', populateWindowDropdown);
+
         map.on('load', () => initMapLayer());
         if (map.loaded()) initMapLayer();
       });
+
+    function populateWindowDropdown() {
+      const fromVal = document.getElementById('range-from').value;
+      const toVal = document.getElementById('range-to').value;
+
+      const filtered = timeData.window_labels.filter(label => {
+        const dateStr = label.split('_')[0];
+        return (!fromVal || dateStr >= fromVal) && (!toVal || dateStr <= toVal);
+      });
+
+      const select = document.getElementById('window-select');
+      select.innerHTML = '';
+      filtered.forEach(label => {
+        const opt = document.createElement('option');
+        opt.value = label;
+        opt.textContent = label;
+        select.appendChild(opt);
+      });
+
+      if (filtered.length === 0) {
+        currentWindow = null;
+        return;
+      }
+
+      currentWindow = filtered[0];
+      select.value = currentWindow;
+
+      const slider = document.getElementById('time-slider');
+      slider.max = timeData.windows[currentWindow].length - 1;
+      slider.value = 0;
+      updateFrame(0);
+    }
 
     function initMapLayer() {
       const features = timeData.stations.map(s => ({
