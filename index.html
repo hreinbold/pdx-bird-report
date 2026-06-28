@@ -626,31 +626,54 @@
         (!toVal || r.bucket_start <= toVal + 'T23:59:59')
       );
 
+      // reconstruct full timestamps (not truncated category strings) so
+      // the x-axis can be treated as real dates rather than evenly-spaced
+      // categories - with sparse data, category spacing made bars look
+      // "chunky" and misrepresented the actual time gaps between them
+      const offset = records.length > 0 ? records[0].bucket_start.slice(-6) : '-07:00';
+
       const buckets = {};
       records.forEach(r => {
-        const key = freq === 'hour' ? r.bucket_start.slice(0, 13) : r.bucket_start.slice(0, 10);
+        const d = new Date(r.bucket_start);
+        let key;
+        if (freq === 'hour') {
+          key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:00:00${offset}`;
+        } else {
+          key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00${offset}`;
+        }
         buckets[key] = (buckets[key] || 0) + r.count;
       });
 
       const sortedKeys = Object.keys(buckets).sort();
 
-      // use BirdWeather's assigned species color when one species is
-      // selected; for "All species" aggregate, a single color isn't
-      // meaningful, so omit the marker key entirely rather than setting
-      // it to undefined (some Plotly versions choke on an explicit
-      // undefined property rather than just ignoring a missing one)
+      if (sortedKeys.length === 0) {
+        Plotly.newPlot('station-chart', [], { title: `${species === '__all__' ? 'All species' : species} - no data in range` });
+        return;
+      }
+
+      const barWidthMs = freq === 'hour' ? 60 * 60 * 1000 * 0.9 : 24 * 60 * 60 * 1000 * 0.9; // 90% of bucket width, leaves a visible gap between bars
+
       const trace = {
         x: sortedKeys,
         y: sortedKeys.map(k => buckets[k]),
-        type: 'bar'
+        type: 'bar',
+        width: barWidthMs
       };
       if (species !== '__all__' && speciesData.species_colors[species]) {
         trace.marker = { color: speciesData.species_colors[species] };
       }
 
+      // force the x-axis to span the FULL selected date range, not just
+      // wherever data happens to exist - otherwise Plotly autoranges
+      // tightly around sparse data points, making the axis window shrink
+      // to roughly the bar's own width and making a single bar look like
+      // it fills the whole chart regardless of how narrow it actually is
+      const rangeStart = fromVal ? `${fromVal}T00:00:00${offset}` : sortedKeys[0];
+      const rangeEnd = toVal ? `${toVal}T23:59:59${offset}` : sortedKeys[sortedKeys.length - 1];
+
       Plotly.newPlot('station-chart', [trace], {
         title: species === '__all__' ? 'All species' : species,
-        xaxis: { title: freq === 'hour' ? 'Hour' : 'Day' },
+        xaxis: { title: freq === 'hour' ? 'Hour' : 'Day', type: 'date', range: [rangeStart, rangeEnd] },
         yaxis: { title: 'Detections' },
         autosize: true,
         dragmode: false
