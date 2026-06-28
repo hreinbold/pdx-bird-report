@@ -1,17 +1,22 @@
 """
 Build a fine-grained (2-min bucket) crow detection dataset focused on
-90-minute windows around sunrise and sunset, for spotting roost-flight
-movement that gets smoothed away at coarser bucket sizes.
+windows around sunrise and sunset, for spotting roost-flight movement
+that gets smoothed away at coarser bucket sizes.
 
-Reuses the existing crow_detections.csv (no new BirdWeather pull needed).
-Sunrise/sunset times come from the free sunrise-sunset.org API (no key
-required).
+Reads from data/detections_all_species.csv (the general-purpose
+all-species pull) and filters down to American Crow here, rather than
+relying on a species-specific pull. Sunrise/sunset times come from the
+free sunrise-sunset.org API (no key required).
 """
 
 import requests
 import pandas as pd
 import time
 from datetime import datetime, timedelta
+
+TARGET_SPECIES = "American Crow"
+INPUT_FILE = "data/detections_all_species.csv"
+OUTPUT_FILE = "data/crow_focus_window.csv"
 
 LAT = 45.52   # rough center of your PDX bbox - adjust if you want a more precise reference point
 LON = -122.65
@@ -74,7 +79,14 @@ def build_focus_window(df, center_time, label):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("data/crow_detections.csv", parse_dates=["timestamp"])
+    full_df = pd.read_csv(INPUT_FILE, parse_dates=["timestamp"])
+    print(f"Loaded {len(full_df)} total detections (all species)")
+
+    df = full_df[full_df["species"] == TARGET_SPECIES].copy()
+    print(f"Filtered to {len(df)} {TARGET_SPECIES} detections")
+
+    if df.empty:
+        raise SystemExit(f"No '{TARGET_SPECIES}' detections found - check the species column's exact string values")
 
     unique_dates = sorted(df["timestamp"].dt.strftime("%Y-%m-%d").unique())
     print(f"Found {len(unique_dates)} unique dates in dataset: {unique_dates}")
@@ -104,5 +116,5 @@ if __name__ == "__main__":
         time.sleep(0.5)  # be polite to the free sunrise-sunset.org API too
 
     combined = pd.concat(all_windows, ignore_index=True)
-    combined.to_csv("data/crow_focus_window.csv", index=False)
-    print(f"\nSaved {len(combined)} rows across {len(unique_dates)} days to crow_focus_window.csv")
+    combined.to_csv(OUTPUT_FILE, index=False)
+    print(f"\nSaved {len(combined)} rows across {len(unique_dates)} days to {OUTPUT_FILE}")

@@ -7,7 +7,7 @@ bucket frames - ready for a day-selector dropdown on the map page.
 import pandas as pd
 import json
 
-df = pd.read_csv("crow_focus_window.csv", parse_dates=["bucket_start"])
+df = pd.read_csv("data/crow_focus_window.csv", parse_dates=["bucket_start"])
 
 stations = (
     df[["station_id", "station_name", "lat", "lon"]]

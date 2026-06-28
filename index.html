@@ -5,13 +5,57 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PDX Bird Report</title>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
   <style>
     html, body {
       height: 100%;
       margin: 0;
       font-family: sans-serif;
     }
+    #map {
+      position: absolute;
+      top: 0; bottom: 0; left: 0; right: 0;
+    }
 
+    /* ---- Map-mode controls (unchanged from before) ---- */
+    #map-controls {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 500px;
+      z-index: 10;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    #time-label {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    #time-slider { width: 100%; }
+    #play-btn {
+      margin-top: 8px;
+      font-size: 16px;
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    #date-range-label {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    /* ---- Station-detail mode (matches existing dashboard header style) ---- */
     #top-bar {
       position: fixed;
       top: 10px;
@@ -22,7 +66,15 @@
       align-items: center;
       gap: 12px;
     }
-
+    #back-to-map-btn {
+      font-size: 16px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
     #toggle-btn {
       font-size: 20px;
       background: #fff;
@@ -32,20 +84,17 @@
       cursor: pointer;
       box-shadow: 0 1px 4px rgba(0,0,0,0.2);
     }
-
     #page-title {
       margin: 0;
       font-size: 20px;
     }
-
-    #view-select {
+    #station-view-select {
       margin-left: auto;
       font-size: 16px;
       padding: 6px;
       border-radius: 6px;
     }
-
-    #controls {
+    #station-controls {
       position: fixed;
       top: 50px;
       left: 10px;
@@ -59,75 +108,607 @@
       flex-direction: column;
       gap: 8px;
     }
-
-    #controls.open {
-      display: flex;
-    }
-
-    #controls select,
-    #controls input {
+    #station-controls.open { display: flex; }
+    #station-controls select,
+    #station-controls input {
       font-size: 16px;
       padding: 6px;
     }
-
-    #chart-wrapper {
-  width: 100%;
-  height: 100%;
-  padding-top: 60px;
-  box-sizing: border-box;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-
-    #chart {
+    #station-chart-wrapper {
+      width: 100%;
       height: 100%;
+      padding-top: 60px;
+      box-sizing: border-box;
+      overflow-x: auto;
+      overflow-y: auto;
+    }
+    #station-chart {
+      min-height: calc(100vh - 80px);
       min-width: 900px;
     }
 
-    #delta-display {
-  padding: 70px 20px 20px 20px;
-}
+    #legend {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 10;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      font-size: 12px;
+    }
+    #legend-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .legend-circle {
+      border-radius: 50%;
+      border: 1px solid #333;
+      flex-shrink: 0;
+    }
+
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <div id="top-bar">
-    <div id="toggle-btn">☰ Filters</div>
-    <h1 id="page-title">PDX Bird Report</h1>
-    <select id="view-select">
-      <option value="trend" selected>Trend</option>
-      <option value="today">Today's Species</option>
-      <option value="delta">Yesterday vs Today</option>
-    </select>
-  </div>
 
-  <div id="controls">
-    <div id="trend-only-controls">
-      <label>Species:
-        <select id="species-select">
-          <option value="__all__">All species</option>
-        </select>
-      </label>
-
-      <label>Frequency:
-        <select id="freq-select">
-          <option value="hour">Hourly</option>
-          <option value="day" selected>Daily</option>
-          <option value="month">Monthly</option>
-        </select>
-      </label>
+  <!-- ===== MAP MODE ===== -->
+  <div id="map-mode">
+    <div id="legend">
+      <div id="legend-title">Detections</div>
+      <div class="legend-row"><div class="legend-circle" style="width:14px; height:14px; background:#cccccc;"></div><span id="legend-label-0">0</span></div>
+      <div class="legend-row"><div class="legend-circle" style="width:20px; height:20px; background:#aed8e6;"></div><span id="legend-label-1">1</span></div>
+      <div class="legend-row"><div class="legend-circle" style="width:36px; height:36px; background:#1d9e75;"></div><span id="legend-label-2">10</span></div>
+      <div class="legend-row"><div class="legend-circle" style="width:56px; height:56px; background:#0b3d2e;"></div><span id="legend-label-3">30+</span></div>
     </div>
-
-    <label>From: <input type="date" id="from-date"></label>
-    <label>To: <input type="date" id="to-date"></label>
+    <div id="map-controls">
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <label style="flex: 1; font-size: 13px;">From: <input type="date" id="range-from" style="width: 100%;"></label>
+        <label style="flex: 1; font-size: 13px;">To: <input type="date" id="range-to" style="width: 100%;"></label>
+      </div>
+      <select id="species-select" style="width: 100%; margin-bottom: 8px; font-size: 14px; padding: 4px;"></select>
+      <div id="time-label">--:--</div>
+      <input type="range" id="time-slider" min="0" max="95" value="0" step="1">
+      <div style="display: flex; gap: 8px; justify-content: center; margin-top: 8px;">
+        <button id="step-back-btn">⏮ Step</button>
+        <button id="play-btn">▶ Play</button>
+        <button id="step-forward-btn">Step ⏭</button>
+        <button id="view-mode-btn" style="font-size: 13px; padding: 4px 12px;">📊 Show Summary</button>
+      </div>
+      <div id="date-range-label"></div>
+      <div style="font-size: 12px; color: #888; text-align: center; margin-top: 6px;">Click any station marker for its detail view</div>
+    </div>
+    <div id="map"></div>
   </div>
 
-  <div id="chart-wrapper">
-    <div id="chart"></div>
+  <!-- ===== STATION DETAIL MODE ===== -->
+  <div id="station-mode" class="hidden">
+    <div id="top-bar">
+      <button id="back-to-map-btn">← Back to Map</button>
+      <div id="toggle-btn">☰ Filters</div>
+      <h1 id="page-title">Station</h1>
+      <select id="station-view-select">
+        <option value="trend" selected>Trend</option>
+        <option value="today">Today's Species</option>
+      </select>
+    </div>
+    <div id="station-controls">
+      <div id="trend-only-controls">
+        <label>Species:
+          <select id="station-species-select">
+            <option value="__all__">All species</option>
+          </select>
+        </label>
+        <label>Frequency:
+          <select id="station-freq-select">
+            <option value="hour">Hourly</option>
+            <option value="day" selected>Daily</option>
+          </select>
+        </label>
+      </div>
+      <label>From: <input type="date" id="station-from-date"></label>
+      <label>To: <input type="date" id="station-to-date"></label>
+    </div>
+    <div id="station-chart-wrapper">
+      <div id="station-chart"></div>
+    </div>
   </div>
 
-  <div id="delta-display"></div>
+  <script>
+    let speciesData = null;
+    let currentFrames = null;
+    let currentTotals = null;
+    let viewMode = 'animated';
+    let map = null;
+    let playing = false;
+    let playInterval = null;
+    let selectedStationId = null;
 
-  <script src="dashboard.js"></script>
+    const map_ = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '© OpenStreetMap contributors'
+          }
+        },
+        layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+      },
+      center: [-122.65, 45.52],
+      zoom: 10
+    });
+    map = map_;
+
+    fetch('data/species_buckets.json')
+      .then(r => r.json())
+      .then(data => {
+        speciesData = data;
+
+        document.getElementById('range-from').value = data.date_range.from;
+        document.getElementById('range-to').value = data.date_range.to;
+        document.getElementById('station-from-date').value = data.date_range.from;
+        document.getElementById('station-to-date').value = data.date_range.to;
+
+        populateSpeciesDropdown();
+        rebuildFrames();
+
+        document.getElementById('species-select').addEventListener('change', rebuildFrames);
+        document.getElementById('range-from').addEventListener('change', rebuildFrames);
+        document.getElementById('range-to').addEventListener('change', rebuildFrames);
+
+        map.on('load', () => initMapLayer());
+        if (map.loaded()) initMapLayer();
+      });
+
+    function populateSpeciesDropdown() {
+      const totals = {};
+      speciesData.records.forEach(r => {
+        totals[r.species] = (totals[r.species] || 0) + r.count;
+      });
+
+      const sorted = speciesData.species_list.slice().sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+
+      const select = document.getElementById('species-select');
+      select.innerHTML = '';
+      sorted.forEach(sp => {
+        const opt = document.createElement('option');
+        opt.value = sp;
+        opt.textContent = `${sp} (${totals[sp] || 0})`;
+        select.appendChild(opt);
+      });
+    }
+
+    function rebuildFrames() {
+      const species = document.getElementById('species-select').value;
+      const fromVal = document.getElementById('range-from').value;
+      const toVal = document.getElementById('range-to').value;
+
+      const filtered = speciesData.records.filter(r =>
+        r.species === species &&
+        (!fromVal || r.bucket_start >= fromVal) &&
+        (!toVal || r.bucket_start <= toVal + 'T23:59:59')
+      );
+
+      if (filtered.length === 0) {
+        currentFrames = [];
+        document.getElementById('time-label').textContent = 'no data';
+        return;
+      }
+
+      const bucketMin = speciesData.bucket_minutes;
+      const sortedTimes = filtered.map(r => r.bucket_start).sort();
+      const gridStartStr = sortedTimes[0];
+      const gridEndStr = sortedTimes[sortedTimes.length - 1];
+
+      const offset = gridStartStr.slice(-6);
+      const gridStart = new Date(gridStartStr);
+      const gridEnd = new Date(gridEndStr);
+
+      const lookup = {};
+      filtered.forEach(r => {
+        lookup[`${r.station_id}|${r.bucket_start}`] = r.count;
+      });
+
+      function formatBucketKey(d) {
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${offset}`;
+      }
+
+      const frames = [];
+      for (let t = new Date(gridStart); t <= gridEnd; t.setMinutes(t.getMinutes() + bucketMin)) {
+        const key = formatBucketKey(t);
+        const counts = {};
+        speciesData.stations.forEach(s => {
+          counts[s.station_id] = lookup[`${s.station_id}|${key}`] || 0;
+        });
+        frames.push({
+          label: t.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          counts: counts
+        });
+      }
+
+      currentTotals = {};
+      filtered.forEach(r => {
+        currentTotals[r.station_id] = (currentTotals[r.station_id] || 0) + r.count;
+      });
+
+      currentFrames = frames;
+
+      const slider = document.getElementById('time-slider');
+      slider.max = frames.length - 1;
+      slider.value = 0;
+      if (viewMode === 'summary') {
+        renderSummary();
+      } else {
+        updateFrame(0);
+      }
+    }
+
+    function initMapLayer() {
+      const features = speciesData.stations.map(s => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: { station_id: s.station_id, name: s.station_name, count: 0 }
+      }));
+
+      map.addSource('stations', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features }
+      });
+
+      map.addLayer({
+        id: 'station-points',
+        type: 'circle',
+        source: 'stations',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['get', 'count'],
+            0, 7, 1, 10, 10, 18, 30, 28
+          ],
+          'circle-color': [
+            'interpolate', ['linear'], ['get', 'count'],
+            0, '#cccccc', 1, '#aed8e6', 10, '#1d9e75', 30, '#0b3d2e'
+          ],
+          'circle-opacity': 0.75,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#333'
+        }
+      });
+
+      map.on('mouseenter', 'station-points', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'station-points', () => { map.getCanvas().style.cursor = ''; });
+
+      map.on('click', 'station-points', (e) => {
+        const props = e.features[0].properties;
+        const mapFocusSpecies = document.getElementById('species-select').value;
+        openStationView(props.station_id, props.name, mapFocusSpecies);
+      });
+
+      updateFrame(0);
+    }
+
+    function computeQuartiles(values) {
+      if (values.length === 0) return { q1: 0, median: 0, q3: 0 };
+      const sorted = values.slice().sort((a, b) => a - b);
+      function percentile(p) {
+        const idx = (sorted.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        if (lo === hi) return sorted[lo];
+        return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+      }
+      return { q1: percentile(0.25), median: percentile(0.5), q3: percentile(0.75) };
+    }
+
+    function renderSummary() {
+      if (!currentTotals) return;
+      document.getElementById('time-label').textContent = 'Summary (full range)';
+
+      const source = map.getSource('stations');
+      if (!source) return;
+
+      // quartile-based tiers computed from stations with nonzero activity
+      // only (including zeros would skew Q1 toward 0 and make the tiers
+      // meaningless) - recalculated fresh for whatever species/date range
+      // is currently selected, so the legend always reflects real numbers
+      // for this specific view rather than a fixed arbitrary scale
+      const nonzeroTotals = Object.values(currentTotals).filter(v => v > 0);
+      const { q1, median, q3 } = computeQuartiles(nonzeroTotals);
+
+      function tierFor(raw) {
+        if (raw === 0) return 0;
+        if (raw <= q1) return 1;
+        if (raw <= median) return 2;
+        return 3;
+      }
+
+      // map each tier onto the SAME fixed reference values (0/1/10/30)
+      // the existing circle-radius/circle-color interpolate expression
+      // already uses, so no separate paint style is needed - just feed
+      // it the tier's representative value instead of the literal count
+      const tierCounts = [0, 1, 10, 30];
+
+      const features = speciesData.stations.map(s => {
+        const raw = currentTotals[s.station_id] || 0;
+        const tier = tierFor(raw);
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+          properties: { station_id: s.station_id, name: s.station_name, count: tierCounts[tier], raw_count: raw }
+        };
+      });
+
+      source.setData({ type: 'FeatureCollection', features });
+
+      // update legend with the actual quartile values for this view
+      document.getElementById('legend-title').textContent = 'Total detections';
+      document.getElementById('legend-label-0').textContent = '0';
+      document.getElementById('legend-label-1').textContent = `≤${Math.round(q1)}`;
+      document.getElementById('legend-label-2').textContent = `≤${Math.round(median)}`;
+      document.getElementById('legend-label-3').textContent = `${Math.round(q3)}+`;
+    }
+
+    function resetLegendToAnimated() {
+      document.getElementById('legend-title').textContent = 'Detections';
+      document.getElementById('legend-label-0').textContent = '0';
+      document.getElementById('legend-label-1').textContent = '1';
+      document.getElementById('legend-label-2').textContent = '10';
+      document.getElementById('legend-label-3').textContent = '30+';
+    }
+
+    document.getElementById('view-mode-btn').addEventListener('click', () => {
+      if (viewMode === 'animated') {
+        viewMode = 'summary';
+        document.getElementById('view-mode-btn').textContent = '🎞 Show Animation';
+        if (playing) {
+          playing = false;
+          document.getElementById('play-btn').textContent = '▶ Play';
+          clearInterval(playInterval);
+        }
+        document.querySelectorAll('#time-slider, #step-back-btn, #play-btn, #step-forward-btn')
+          .forEach(el => el.style.display = 'none');
+        renderSummary(); // sets its own legend text with real quartile values
+      } else {
+        viewMode = 'animated';
+        document.getElementById('view-mode-btn').textContent = '📊 Show Summary';
+        document.querySelectorAll('#time-slider, #step-back-btn, #play-btn, #step-forward-btn')
+          .forEach(el => el.style.display = '');
+        updateFrame(parseInt(document.getElementById('time-slider').value));
+        resetLegendToAnimated();
+      }
+    });
+
+    function updateFrame(slotIndex) {
+      if (!currentFrames || currentFrames.length === 0) return;
+      const frame = currentFrames[slotIndex];
+      if (!frame) return;
+      document.getElementById('time-label').textContent = frame.label;
+
+      const source = map.getSource('stations');
+      if (!source) return;
+
+      const features = speciesData.stations.map(s => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: { station_id: s.station_id, name: s.station_name, count: frame.counts[s.station_id] || 0 }
+      }));
+
+      source.setData({ type: 'FeatureCollection', features });
+    }
+
+    document.getElementById('time-slider').addEventListener('input', (e) => updateFrame(parseInt(e.target.value)));
+
+    document.getElementById('step-back-btn').addEventListener('click', () => {
+      const slider = document.getElementById('time-slider');
+      let prev = parseInt(slider.value) - 1;
+      if (prev < 0) prev = parseInt(slider.max);
+      slider.value = prev;
+      updateFrame(prev);
+    });
+
+    document.getElementById('step-forward-btn').addEventListener('click', () => {
+      const slider = document.getElementById('time-slider');
+      let next = parseInt(slider.value) + 1;
+      if (next > parseInt(slider.max)) next = 0;
+      slider.value = next;
+      updateFrame(next);
+    });
+
+    document.getElementById('play-btn').addEventListener('click', () => {
+      playing = !playing;
+      const btn = document.getElementById('play-btn');
+      if (playing) {
+        btn.textContent = '⏸ Pause';
+        playInterval = setInterval(() => {
+          const slider = document.getElementById('time-slider');
+          let next = parseInt(slider.value) + 1;
+          if (next > parseInt(slider.max)) next = 0;
+          slider.value = next;
+          updateFrame(next);
+        }, 400);
+      } else {
+        btn.textContent = '▶ Play';
+        clearInterval(playInterval);
+      }
+    });
+
+    function populateStationSpeciesDropdown() {
+      const select = document.getElementById('station-species-select');
+      const records = getStationRecords();
+
+      const totals = {};
+      records.forEach(r => { totals[r.species] = (totals[r.species] || 0) + r.count; });
+
+      const sorted = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+
+      select.innerHTML = '<option value="__all__">All species</option>';
+      sorted.forEach(sp => {
+        const opt = document.createElement('option');
+        opt.value = sp;
+        opt.textContent = `${sp} (${totals[sp]})`;
+        select.appendChild(opt);
+      });
+    }
+
+    function openStationView(stationId, stationName, focusSpecies) {
+      selectedStationId = stationId;
+      document.getElementById('page-title').textContent = stationName;
+      document.getElementById('map-mode').classList.add('hidden');
+      document.getElementById('station-mode').classList.remove('hidden');
+      populateStationSpeciesDropdown();
+
+      // default Trend's species filter to whatever was focused on the
+      // map, if that species was actually detected at this station -
+      // otherwise fall back to "All species" rather than silently
+      // selecting something the station never recorded
+      const select = document.getElementById('station-species-select');
+      const hasOption = Array.from(select.options).some(opt => opt.value === focusSpecies);
+      select.value = hasOption ? focusSpecies : '__all__';
+
+      renderStationView();
+    }
+
+    document.getElementById('back-to-map-btn').addEventListener('click', () => {
+      document.getElementById('station-mode').classList.add('hidden');
+      document.getElementById('map-mode').classList.remove('hidden');
+      selectedStationId = null;
+    });
+
+    document.getElementById('toggle-btn').addEventListener('click', () => {
+      document.getElementById('station-controls').classList.toggle('open');
+    });
+
+    document.getElementById('station-view-select').addEventListener('change', renderStationView);
+    document.getElementById('station-species-select').addEventListener('change', renderStationView);
+    document.getElementById('station-freq-select').addEventListener('change', renderStationView);
+    document.getElementById('station-from-date').addEventListener('change', renderStationView);
+    document.getElementById('station-to-date').addEventListener('change', renderStationView);
+
+    function getStationRecords() {
+      if (!selectedStationId) return [];
+      return speciesData.records.filter(r => r.station_id === selectedStationId);
+    }
+
+    function renderStationView() {
+      const view = document.getElementById('station-view-select').value;
+      const trendControls = document.getElementById('trend-only-controls');
+
+      if (view === 'trend') {
+        trendControls.style.display = 'block';
+        drawStationTrend();
+      } else if (view === 'today') {
+        trendControls.style.display = 'none';
+        drawStationToday();
+      }
+    }
+
+    function drawStationTrend() {
+      const species = document.getElementById('station-species-select').value;
+      const freq = document.getElementById('station-freq-select').value;
+      const fromVal = document.getElementById('station-from-date').value;
+      const toVal = document.getElementById('station-to-date').value;
+
+      const records = getStationRecords().filter(r =>
+        (species === '__all__' || r.species === species) &&
+        (!fromVal || r.bucket_start >= fromVal) &&
+        (!toVal || r.bucket_start <= toVal + 'T23:59:59')
+      );
+
+      const buckets = {};
+      records.forEach(r => {
+        const key = freq === 'hour' ? r.bucket_start.slice(0, 13) : r.bucket_start.slice(0, 10);
+        buckets[key] = (buckets[key] || 0) + r.count;
+      });
+
+      const sortedKeys = Object.keys(buckets).sort();
+
+      // use BirdWeather's assigned species color when one species is
+      // selected; for "All species" aggregate, a single color isn't
+      // meaningful, so omit the marker key entirely rather than setting
+      // it to undefined (some Plotly versions choke on an explicit
+      // undefined property rather than just ignoring a missing one)
+      const trace = {
+        x: sortedKeys,
+        y: sortedKeys.map(k => buckets[k]),
+        type: 'bar'
+      };
+      if (species !== '__all__' && speciesData.species_colors[species]) {
+        trace.marker = { color: speciesData.species_colors[species] };
+      }
+
+      Plotly.newPlot('station-chart', [trace], {
+        title: species === '__all__' ? 'All species' : species,
+        xaxis: { title: freq === 'hour' ? 'Hour' : 'Day' },
+        yaxis: { title: 'Detections' },
+        autosize: true,
+        dragmode: false
+      });
+
+      window.dispatchEvent(new Event('resize'));
+    }
+
+    function drawStationToday() {
+      const fromVal = document.getElementById('station-from-date').value;
+      const toVal = document.getElementById('station-to-date').value;
+
+      const records = getStationRecords().filter(r =>
+        (!fromVal || r.bucket_start >= fromVal) &&
+        (!toVal || r.bucket_start <= toVal + 'T23:59:59')
+      );
+
+      if (records.length === 0) {
+        Plotly.newPlot('station-chart', [], { title: 'No data in range' });
+        return;
+      }
+
+      const mostRecentDay = records.map(r => r.bucket_start.slice(0, 10)).sort().slice(-1)[0];
+      const todayRecords = records.filter(r => r.bucket_start.slice(0, 10) === mostRecentDay);
+
+      const counts = {};
+      todayRecords.forEach(r => { counts[r.species] = (counts[r.species] || 0) + r.count; });
+
+      const sorted = Object.entries(counts).sort((a, b) => a[1] - b[1]);
+      const barColors = sorted.map(s => speciesData.species_colors[s[0]] || '#4a90d9');
+
+      // scale chart height with species count so labels have room to
+      // breathe - fixed-height rendering was cramming/cutting off labels
+      // at stations with many species. Wrapper now scrolls vertically
+      // to accommodate the taller chart.
+      const chartHeight = Math.max(400, sorted.length * 28 + 100);
+
+      Plotly.newPlot('station-chart', [{
+        x: sorted.map(s => s[1]),
+        y: sorted.map(s => s[0]),
+        type: 'bar',
+        orientation: 'h',
+        marker: { color: barColors }
+      }], {
+        title: `Species detected - ${mostRecentDay}`,
+        xaxis: { title: 'Detections' },
+        autosize: true,
+        dragmode: false,
+        height: chartHeight,
+        margin: { l: 150 }
+      });
+
+      window.dispatchEvent(new Event('resize'));
+    }
+
+    window.addEventListener('resize', () => {
+      if (typeof Plotly !== 'undefined') Plotly.Plots.resize('station-chart');
+    });
+  </script>
 </body>
 </html>
