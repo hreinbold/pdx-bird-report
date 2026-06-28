@@ -24,7 +24,7 @@
       top: 10px;
       left: 50%;
       transform: translateX(-50%);
-      width: 500px;
+      width: min(500px, 92vw);
       z-index: 10;
       background: #fff;
       border: 1px solid #ccc;
@@ -119,11 +119,16 @@
       height: 100%;
       padding-top: 60px;
       box-sizing: border-box;
-      overflow-x: auto;
+      overflow-x: hidden;
       overflow-y: auto;
+    }
+    #station-chart-wrapper.expanded {
+      overflow-x: auto;
     }
     #station-chart {
       min-height: calc(100vh - 80px);
+    }
+    #station-chart-wrapper.expanded #station-chart {
       min-width: 900px;
     }
 
@@ -200,6 +205,7 @@
         <option value="trend" selected>Trend</option>
         <option value="today">Today's Species</option>
       </select>
+      <button id="expand-chart-btn" style="font-size: 14px; padding: 6px 10px;">⤢ Expand</button>
     </div>
     <div id="station-controls">
       <div id="trend-only-controls">
@@ -584,6 +590,19 @@
       document.getElementById('station-mode').classList.add('hidden');
       document.getElementById('map-mode').classList.remove('hidden');
       selectedStationId = null;
+    });
+
+    document.getElementById('expand-chart-btn').addEventListener('click', () => {
+      const wrapper = document.getElementById('station-chart-wrapper');
+      wrapper.classList.toggle('expanded');
+      const btn = document.getElementById('expand-chart-btn');
+      btn.textContent = wrapper.classList.contains('expanded') ? '⤡ Fit to window' : '⤢ Expand';
+      // container width just changed - Plotly's autosize only reacts to
+      // window resize events, not arbitrary container size changes, so
+      // trigger a manual resize after the layout change takes effect
+      setTimeout(() => {
+        if (typeof Plotly !== 'undefined') Plotly.Plots.resize('station-chart');
+      }, 50);
     });
 
     document.getElementById('toggle-btn').addEventListener('click', () => {
