@@ -348,13 +348,23 @@
       if (!speciesData.records.length) return;
 
       // "new this week" = species whose earliest detection in the
-      // currently-loaded data falls after the first full day of the
-      // dataset's range - a simple heuristic (not tracking true
-      // multi-week history) that flags anything that started appearing
-      // partway through the loaded window rather than being present
-      // from day one
+      // currently-loaded data falls after the first FULL midnight-to-
+      // midnight day in the dataset. If the data's earliest timestamp
+      // starts at or before 4am, that day is close enough to complete
+      // to count as the first full day; otherwise (data starts later
+      // in the day, e.g. mid-afternoon) the day after is the first
+      // true full day, so the cutoff needs to skip an extra day.
       const offset = speciesData.records[0].bucket_start.slice(-6);
-      const cutoff = `${addOneDay(speciesData.date_range.from)}T00:00:00${offset}`;
+      const earliestTimestamp = speciesData.records.reduce(
+        (min, r) => (r.bucket_start < min ? r.bucket_start : min),
+        speciesData.records[0].bucket_start
+      );
+      const earliestHour = parseInt(earliestTimestamp.slice(11, 13), 10);
+      const daysToSkip = earliestHour <= 4 ? 1 : 2;
+
+      let cutoffDate = speciesData.date_range.from;
+      for (let i = 0; i < daysToSkip; i++) cutoffDate = addOneDay(cutoffDate);
+      const cutoff = `${cutoffDate}T00:00:00${offset}`;
 
       const firstSeen = {};
       speciesData.records.forEach(r => {
