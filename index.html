@@ -139,6 +139,35 @@
       min-width: 900px;
     }
 
+    #new-birds-box {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 10;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 10px 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      font-size: 12px;
+      max-width: 220px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    #new-birds-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+    .new-bird-item {
+      cursor: pointer;
+      padding: 3px 4px;
+      border-radius: 4px;
+    }
+    .new-bird-item:hover {
+      background: #f0f0f0;
+    }
+
     #legend {
       position: fixed;
       bottom: 16px;
@@ -175,6 +204,10 @@
 
   <!-- ===== MAP MODE ===== -->
   <div id="map-mode">
+    <div id="new-birds-box" class="hidden">
+      <div id="new-birds-title">New this week</div>
+      <div id="new-birds-list"></div>
+    </div>
     <div id="legend">
       <div id="legend-title">Detections</div>
       <div class="legend-row"><div class="legend-circle" style="width:14px; height:14px; background:#cccccc;"></div><span id="legend-label-0">0</span></div>
@@ -187,6 +220,7 @@
         <label style="flex: 1; font-size: 13px;">From: <input type="date" id="range-from" style="width: 100%;"></label>
         <label style="flex: 1; font-size: 13px;">To: <input type="date" id="range-to" style="width: 100%;"></label>
       </div>
+      <input id="species-filter" type="text" placeholder="Filter species..." style="width: 100%; margin-bottom: 4px; font-size: 13px; padding: 5px; box-sizing: border-box;" autocomplete="off">
       <select id="species-select" style="width: 100%; margin-bottom: 8px; font-size: 14px; padding: 4px;"></select>
       <div id="time-label">--:--</div>
       <input type="range" id="time-slider" min="0" max="95" value="0" step="1">
@@ -247,6 +281,7 @@
     let playing = false;
     let playInterval = null;
     let selectedStationId = null;
+    let currentMapSpecies = null;       // the actual species name currently selected on the map
 
     const map_ = new maplibregl.Map({
       container: 'map',
@@ -280,34 +315,132 @@
         populateSpeciesDropdown();
         rebuildFrames();
 
-        document.getElementById('species-select').addEventListener('change', rebuildFrames);
+        document.getElementById('species-select').addEventListener('change', (e) => {
+          currentMapSpecies = e.target.value;
+          rebuildFrames();
+        });
+        document.getElementById('species-filter').addEventListener('input', (e) => {
+          renderSpeciesOptions(e.target.value);
+        });
         document.getElementById('range-from').addEventListener('change', rebuildFrames);
         document.getElementById('range-to').addEventListener('change', rebuildFrames);
+
+        renderNewBirdsBox();
 
         map.on('load', () => initMapLayer());
         if (map.loaded()) initMapLayer();
       });
 
-    function populateSpeciesDropdown() {
-      const totals = {};
+    function positionNewBirdsBox() {
+      const legend = document.getElementById('legend');
+      const newBirdsBox = document.getElementById('new-birds-box');
+      newBirdsBox.style.bottom = (16 + legend.offsetHeight + 12) + 'px';
+    }
+    positionNewBirdsBox();
+
+    function addOneDay(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function renderNewBirdsBox() {
+      if (!speciesData.records.length) return;
+
+      // "new this week" = species whose earliest detection in the
+      // currently-loaded data falls after the first full day of the
+      // dataset's range - a simple heuristic (not tracking true
+      // multi-week history) that flags anything that started appearing
+      // partway through the loaded window rather than being present
+      // from day one
+      const offset = speciesData.records[0].bucket_start.slice(-6);
+      const cutoff = `${addOneDay(speciesData.date_range.from)}T00:00:00${offset}`;
+
+      const firstSeen = {};
       speciesData.records.forEach(r => {
-        totals[r.species] = (totals[r.species] || 0) + r.count;
+        if (!firstSeen[r.species] || r.bucket_start < firstSeen[r.species]) {
+          firstSeen[r.species] = r.bucket_start;
+        }
       });
 
-      const sorted = speciesData.species_list.slice().sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+      const newSpecies = Object.keys(firstSeen)
+        .filter(sp => firstSeen[sp] >= cutoff)
+        .sort((a, b) => firstSeen[b].localeCompare(firstSeen[a])); // most recently new first
 
-      const select = document.getElementById('species-select');
-      select.innerHTML = '';
-      sorted.forEach(sp => {
-        const opt = document.createElement('option');
-        opt.value = sp;
-        opt.textContent = `${sp} (${totals[sp] || 0})`;
-        select.appendChild(opt);
+      const box = document.getElementById('new-birds-box');
+      const list = document.getElementById('new-birds-list');
+
+      if (newSpecies.length === 0) {
+        box.classList.add('hidden');
+        return;
+      }
+
+      box.classList.remove('hidden');
+      list.innerHTML = '';
+      newSpecies.forEach(sp => {
+        const item = document.createElement('div');
+        item.className = 'new-bird-item';
+        item.textContent = sp;
+        item.addEventListener('click', () => selectMapSpecies(sp));
+        list.appendChild(item);
       });
     }
 
+    function selectMapSpecies(speciesName) {
+      currentMapSpecies = speciesName;
+      document.getElementById('species-filter').value = '';
+      renderSpeciesOptions('');
+      document.getElementById('species-select').value = speciesName;
+      rebuildFrames();
+    }
+
+    let sortedSpeciesList = []; // full species list, sorted most-to-least detected
+    let speciesTotals = {};
+
+    function populateSpeciesDropdown() {
+      speciesTotals = {};
+      speciesData.records.forEach(r => {
+        speciesTotals[r.species] = (speciesTotals[r.species] || 0) + r.count;
+      });
+
+      sortedSpeciesList = speciesData.species_list.slice()
+        .sort((a, b) => (speciesTotals[b] || 0) - (speciesTotals[a] || 0));
+
+      renderSpeciesOptions('');
+
+      if (!currentMapSpecies && sortedSpeciesList.length > 0) {
+        currentMapSpecies = sortedSpeciesList[0];
+      }
+    }
+
+    function renderSpeciesOptions(filterText) {
+      const select = document.getElementById('species-select');
+      const lower = filterText.trim().toLowerCase();
+      const filtered = lower
+        ? sortedSpeciesList.filter(sp => sp.toLowerCase().includes(lower))
+        : sortedSpeciesList;
+
+      select.innerHTML = '';
+      filtered.forEach(sp => {
+        const opt = document.createElement('option');
+        opt.value = sp;
+        opt.textContent = `${sp} (${speciesTotals[sp] || 0})`;
+        select.appendChild(opt);
+      });
+
+      // preserve current selection if it's still in the filtered list,
+      // otherwise fall back to the first filtered option and rebuild
+      if (filtered.includes(currentMapSpecies)) {
+        select.value = currentMapSpecies;
+      } else if (filtered.length > 0) {
+        select.value = filtered[0];
+        currentMapSpecies = filtered[0];
+        if (speciesData) rebuildFrames();
+      }
+    }
+
     function rebuildFrames() {
-      const species = document.getElementById('species-select').value;
+      const species = currentMapSpecies;
       const fromVal = document.getElementById('range-from').value;
       const toVal = document.getElementById('range-to').value;
 
@@ -408,8 +541,7 @@
 
       map.on('click', 'station-points', (e) => {
         const props = e.features[0].properties;
-        const mapFocusSpecies = document.getElementById('species-select').value;
-        openStationView(props.station_id, props.name, mapFocusSpecies);
+        openStationView(props.station_id, props.name, currentMapSpecies);
       });
 
       updateFrame(0);

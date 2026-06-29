@@ -2,7 +2,7 @@ name: Update Bird Detections
 
 on:
   schedule:
-    - cron: '0 9 * * *'   # once daily at 09:00 UTC
+    - cron: '47 7 * * *'   # once daily at 09:00 UTC
   workflow_dispatch:        # lets you trigger it manually from GitHub's UI too
 
 permissions:
